@@ -1,0 +1,223 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Asteroids</title>
+<style>
+  /* ---- EDIT YOUR COLOURS HERE ---- */
+  :root {
+    --bg: #EBECB2;      /* background */
+    --ink: #CB4D28;     /* text + ship (orange) */
+    --win: #3C9D91;     /* "YOU WIN" colour */
+    --lose: #7C1E2B;    /* "YOU LOSE" colour */
+    color-scheme: light;
+  }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Georgia, "Times New Roman", serif;
+    overflow: hidden;
+    overscroll-behavior: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%;
+       background: var(--bg); touch-action: none; display: block; }
+
+  /* timer, top centre, clear of the notch */
+  #timer { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 14px);
+    left: 0; right: 0; text-align: center; font-size: 30px;
+    color: var(--ink); font-weight: bold;
+    font-variant-numeric: tabular-nums; pointer-events: none; }
+
+  /* thumb controls, sitting above the home bar */
+  #pad { position: fixed; left: 0; right: 0;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 18px);
+    display: flex; justify-content: space-between;
+    padding: 0 22px; pointer-events: none; }
+  .btn { pointer-events: auto; width: 84px; height: 84px; border-radius: 50%;
+    border: 3px solid var(--ink); color: var(--ink);
+    background: rgba(252,233,231,0.55); font-size: 32px;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none; -webkit-user-select: none; user-select: none; }
+  .btn:active { background: rgba(252,233,231,0.92); }
+  #right-group { display: flex; gap: 16px; }
+
+  /* start + end overlays */
+  .screen { position: fixed; inset: 0; display: flex;
+    flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 0 24px; background: var(--bg); }
+  #start h1 { font-size: 14vw; margin: 0; color: var(--ink); text-wrap: balance; }
+  #start p  { font-size: 5vw; margin: 2.4vh 0 0; color: var(--ink); max-width: 18ch; line-height: 1.4; }
+  #msg h1   { font-size: 16vw; margin: 0; }
+  #msg p    { font-size: 5vw; color: var(--ink); margin-top: 1.6vh; }
+  @media (min-width: 600px) {
+    #start h1 { font-size: 72px; } #start p { font-size: 22px; }
+    #msg h1 { font-size: 104px; } #msg p { font-size: 24px; }
+  }
+</style>
+
+<canvas id="c"></canvas>
+<div id="timer" hidden>60</div>
+
+<div id="pad" hidden>
+  <div class="btn" id="b-left">&#9664;</div>
+  <div id="right-group">
+    <div class="btn" id="b-thrust">&#9650;</div>
+    <div class="btn" id="b-right">&#9654;</div>
+  </div>
+</div>
+
+<div class="screen" id="start">
+  <h1>Asteroids</h1>
+  <p id="start-text">Dodge the rocks. Survive 60 seconds. Tap to begin.</p>
+</div>
+
+<div class="screen" id="msg" hidden>
+  <h1 id="msg-title"></h1>
+  <p id="msg-sub"></p>
+</div>
+
+<script>
+/* =========================================================
+   SETTINGS YOU CAN EDIT
+   ========================================================= */
+const SURVIVE_SECONDS = 60;   // how long they must last
+const WIN_CHANCE      = 0.5;  // 0.5 = 50/50 odds of surviving
+/* ========================================================= */
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const INK = css('--ink');
+
+let W, H, DPR;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width  = Math.floor(W * DPR);
+  canvas.height = Math.floor(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+resize();
+window.addEventListener('resize', resize);
+
+const timerEl = document.getElementById('timer');
+const padEl   = document.getElementById('pad');
+const startEl = document.getElementById('start');
+const msgEl   = document.getElementById('msg');
+
+document.getElementById('start-text').textContent =
+  `Dodge the rocks. Survive ${SURVIVE_SECONDS} seconds. Tap to begin.`;
+
+let ship, asteroids, keys, startTime, running = false;
+
+function begin(){
+  startEl.hidden = true; msgEl.hidden = true;
+  timerEl.hidden = false; padEl.hidden = false;
+
+  ship = { x:W/2, y:H/2, a:-Math.PI/2, vx:0, vy:0, r:12 };
+  asteroids = [];
+  // The 50/50 bit: decide up front whether this run is winnable,
+  // then set how many / how fast the rocks are to match.
+  const willWin = Math.random() < WIN_CHANCE;
+  const count = willWin ? 4 : 8;      // fewer rocks = easier
+  const speed = willWin ? 0.6 : 1.4;  // slower rocks = easier
+  for (let i=0;i<count;i++){
+    const edge = Math.random()*Math.PI*2;
+    asteroids.push({
+      x: Math.random()*W, y: Math.random()*H,
+      vx: Math.cos(edge)*speed, vy: Math.sin(edge)*speed,
+      r: 22 + Math.random()*22
+    });
+  }
+  keys = { left:false, right:false, thrust:false };
+  startTime = Date.now(); running = true;
+  timerEl.textContent = SURVIVE_SECONDS;
+}
+
+function endGame(won){
+  running = false;
+  timerEl.hidden = true; padEl.hidden = true;
+  const title = document.getElementById('msg-title');
+  title.textContent = won ? 'YOU WIN' : 'YOU LOSE';
+  document.getElementById('msg-sub').textContent =
+    won ? 'You get Video 1! Lucky you!' : 'You get Video 2, good luck!';
+  msgEl.hidden = false;
+  // BRANCH HOOK: won === true  -> show Video 1
+  //             won === false -> show Video 2
+}
+
+function loop(){
+  requestAnimationFrame(loop);
+  if(!running) return;
+  ctx.clearRect(0,0,W,H);
+
+  const elapsed = (Date.now()-startTime)/1000;
+  const left = Math.max(0, SURVIVE_SECONDS - elapsed);
+  timerEl.textContent = Math.ceil(left);
+  if(left <= 0){ endGame(true); return; }   // survived = win
+
+  if(keys.left)  ship.a -= 0.06;
+  if(keys.right) ship.a += 0.06;
+  if(keys.thrust){ ship.vx += Math.cos(ship.a)*0.15; ship.vy += Math.sin(ship.a)*0.15; }
+  ship.vx *= 0.99; ship.vy *= 0.99;
+  ship.x = (ship.x+ship.vx+W)%W; ship.y = (ship.y+ship.vy+H)%H;
+
+  ctx.save(); ctx.translate(ship.x, ship.y); ctx.rotate(ship.a);
+  ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.beginPath();
+  ctx.moveTo(14,0); ctx.lineTo(-10,-9); ctx.lineTo(-6,0); ctx.lineTo(-10,9);
+  ctx.closePath(); ctx.stroke(); ctx.restore();
+
+  for(const r of asteroids){
+    r.x=(r.x+r.vx+W)%W; r.y=(r.y+r.vy+H)%H;
+    ctx.strokeStyle = INK; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(r.x,r.y,r.r,0,Math.PI*2); ctx.stroke();
+    const dx=r.x-ship.x, dy=r.y-ship.y;
+    if(Math.hypot(dx,dy) < r.r+ship.r){ endGame(false); return; }  // hit = lose
+  }
+}
+
+// ---- keyboard (for testing on a laptop) ----
+addEventListener('keydown', e=>{
+  if(!keys) return;
+  if(e.key==='ArrowLeft')  keys.left=true;
+  if(e.key==='ArrowRight') keys.right=true;
+  if(e.key==='ArrowUp')    keys.thrust=true;
+});
+addEventListener('keyup', e=>{
+  if(!keys) return;
+  if(e.key==='ArrowLeft')  keys.left=false;
+  if(e.key==='ArrowRight') keys.right=false;
+  if(e.key==='ArrowUp')    keys.thrust=false;
+});
+
+// ---- touch buttons ----
+function hold(id, on){
+  const el = document.getElementById(id);
+  const set = v => e => { e.preventDefault(); if(keys) keys[on]=v; };
+  el.addEventListener('touchstart', set(true),  {passive:false});
+  el.addEventListener('touchend',   set(false));
+  el.addEventListener('touchcancel',set(false));
+  el.addEventListener('mousedown',  set(true));
+  el.addEventListener('mouseup',    set(false));
+  el.addEventListener('mouseleave', set(false));
+}
+hold('b-left','left'); hold('b-right','right'); hold('b-thrust','thrust');
+
+// ---- tap start / end screen to play ----
+let lastTap = 0;
+function tapBegin(e){
+  e.preventDefault();
+  const now = Date.now();
+  if(now - lastTap < 400) return;   // ignore the duplicate touch+click
+  lastTap = now;
+  begin();
+}
+startEl.addEventListener('click', tapBegin);
+startEl.addEventListener('touchstart', tapBegin, {passive:false});
+// end screen is final — no replay
+
+loop();
+</script>
+</body></html>
