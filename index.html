@@ -1,4 +1,8 @@
-<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Asteroids</title>
 <style>
   /* ---- EDIT YOUR COLOURS HERE ---- */
@@ -40,6 +44,7 @@
     display: flex; align-items: center; justify-content: center;
     touch-action: none; -webkit-user-select: none; user-select: none; }
   .btn:active { background: rgba(252,233,231,0.92); }
+  .btn svg { pointer-events: none; display: block; }
   #right-group { display: flex; gap: 16px; }
 
   /* start + end overlays */
@@ -55,15 +60,23 @@
     #msg h1 { font-size: 104px; } #msg p { font-size: 24px; }
   }
 </style>
+</head>
+<body>
 
 <canvas id="c"></canvas>
 <div id="timer" hidden>60</div>
 
 <div id="pad" hidden>
-  <div class="btn" id="b-left">&#9664;</div>
+  <div class="btn" id="b-left" aria-label="rotate left">
+    <svg viewBox="0 0 24 24" width="34" height="34" fill="currentColor" aria-hidden="true"><path d="M5 12 L19 3 L19 21 Z"/></svg>
+  </div>
   <div id="right-group">
-    <div class="btn" id="b-thrust">&#9650;</div>
-    <div class="btn" id="b-right">&#9654;</div>
+    <div class="btn" id="b-thrust" aria-label="thrust">
+      <svg viewBox="0 0 24 24" width="34" height="34" fill="currentColor" aria-hidden="true"><path d="M12 5 L21 19 L3 19 Z"/></svg>
+    </div>
+    <div class="btn" id="b-right" aria-label="rotate right">
+      <svg viewBox="0 0 24 24" width="34" height="34" fill="currentColor" aria-hidden="true"><path d="M19 12 L5 3 L5 21 Z"/></svg>
+    </div>
   </div>
 </div>
 
@@ -83,6 +96,7 @@
    ========================================================= */
 const SURVIVE_SECONDS = 60;   // how long they must last
 const WIN_CHANCE      = 0.5;  // 0.5 = 50/50 odds of surviving
+const GRACE_SECONDS   = 1.6;  // safe time at the start (no crashes yet)
 /* ========================================================= */
 
 const canvas = document.getElementById('c');
@@ -116,19 +130,23 @@ function begin(){
   startEl.hidden = true; msgEl.hidden = true;
   timerEl.hidden = false; padEl.hidden = false;
 
-  ship = { x:W/2, y:H/2, a:-Math.PI/2, vx:0, vy:0, r:12 };
+  ship = { x:W/2, y:H/2, a:-Math.PI/2, vx:0, vy:0, r:9 };
   asteroids = [];
   // The 50/50 bit: decide up front whether this run is winnable,
   // then set how many / how fast the rocks are to match.
   const willWin = Math.random() < WIN_CHANCE;
-  const count = willWin ? 4 : 8;      // fewer rocks = easier
-  const speed = willWin ? 0.6 : 1.4;  // slower rocks = easier
+  const count = willWin ? 3 : 7;       // fewer rocks = easier
+  const speed = willWin ? 0.5 : 1.15;  // slower rocks = easier
+  const SAFE = Math.max(170, Math.min(W, H) * 0.3); // keep a clear zone around the ship's start
   for (let i=0;i<count;i++){
+    let x, y, tries = 0;
+    do { x = Math.random()*W; y = Math.random()*H; tries++; }
+    while (Math.hypot(x - ship.x, y - ship.y) < SAFE && tries < 60);
     const edge = Math.random()*Math.PI*2;
     asteroids.push({
-      x: Math.random()*W, y: Math.random()*H,
+      x, y,
       vx: Math.cos(edge)*speed, vy: Math.sin(edge)*speed,
-      r: 22 + Math.random()*22
+      r: 20 + Math.random()*20
     });
   }
   keys = { left:false, right:false, thrust:false };
@@ -164,7 +182,10 @@ function loop(){
   ship.vx *= 0.99; ship.vy *= 0.99;
   ship.x = (ship.x+ship.vx+W)%W; ship.y = (ship.y+ship.vy+H)%H;
 
+  const safe = elapsed < GRACE_SECONDS;   // can't crash yet
+
   ctx.save(); ctx.translate(ship.x, ship.y); ctx.rotate(ship.a);
+  if(safe) ctx.globalAlpha = 0.35 + 0.35*Math.abs(Math.sin(elapsed*10)); // blink while safe
   ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.beginPath();
   ctx.moveTo(14,0); ctx.lineTo(-10,-9); ctx.lineTo(-6,0); ctx.lineTo(-10,9);
   ctx.closePath(); ctx.stroke(); ctx.restore();
@@ -173,8 +194,10 @@ function loop(){
     r.x=(r.x+r.vx+W)%W; r.y=(r.y+r.vy+H)%H;
     ctx.strokeStyle = INK; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(r.x,r.y,r.r,0,Math.PI*2); ctx.stroke();
-    const dx=r.x-ship.x, dy=r.y-ship.y;
-    if(Math.hypot(dx,dy) < r.r+ship.r){ endGame(false); return; }  // hit = lose
+    if(!safe){
+      const dx=r.x-ship.x, dy=r.y-ship.y;
+      if(Math.hypot(dx,dy) < r.r+ship.r){ endGame(false); return; }  // hit = lose
+    }
   }
 }
 
@@ -220,4 +243,5 @@ startEl.addEventListener('touchstart', tapBegin, {passive:false});
 
 loop();
 </script>
-</body></html>
+</body>
+</html>
